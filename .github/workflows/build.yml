@@ -20,8 +20,26 @@ jobs:
           chmod +x build-xcframework_cpu.sh
           bash build-xcframework_cpu.sh
 
-      - name: Show schemes
-        run: xcodebuild -list -project LLMFarm.xcodeproj
+      - name: Patch - remove ExtractAppIntentsMetadata
+        run: |
+          python3 << 'EOF'
+          import re, glob
+
+          for pbxproj in glob.glob('**/*.xcodeproj/project.pbxproj', recursive=True):
+              with open(pbxproj, 'r') as f:
+                  content = f.read()
+              keys = re.findall(r'([A-F0-9]{24}) /\* Extract App Intents Metadata \*/', content)
+              for key in keys:
+                  content = re.sub(
+                      r'\t\t' + key + r' /\* Extract App Intents Metadata \*/ = \{.*?\};\n',
+                      '', content, flags=re.DOTALL)
+                  content = re.sub(
+                      r'\t+' + key + r' /\* Extract App Intents Metadata \*/,\n',
+                      '', content)
+              with open(pbxproj, 'w') as f:
+                  f.write(content)
+              print(f'{pbxproj}: removed {len(keys)} phase(s)')
+          EOF
 
       - name: Build archive
         run: |
@@ -31,12 +49,11 @@ jobs:
             -configuration Release \
             -archivePath ./build/LLMFarm.xcarchive \
             -destination "generic/platform=iOS" \
-            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=YES \
-            APP_INTENTS_DEPLOYMENT_POSTPROCESSING=NO \
+            CODE_SIGN_IDENTITY="" \
             SKIP_INSTALL=NO
-            
+
       - name: Package IPA
         run: |
           mkdir -p ./build/Payload
