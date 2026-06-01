@@ -27,7 +27,7 @@ jobs:
         run: |
           xcodebuild archive \
             -project LLMFarm.xcodeproj \
-            -scheme LLMFarm \
+            -scheme LLMFarm_Release \
             -configuration Release \
             -archivePath ./build/LLMFarm.xcarchive \
             -destination "generic/platform=iOS" \
