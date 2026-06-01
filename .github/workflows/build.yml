@@ -53,94 +53,133 @@ jobs:
               print(f'{pbxproj}: removed {len(keys)} phase(s)')
           EOF
 
-      - name: Create VoiceChat Swift files
+      - name: Patch pbxproj - register VoiceChat files
         run: |
-          mkdir -p LLMFarm/VoiceChat
-          cat > LLMFarm/VoiceChat/VoiceChatManager.swift << 'MGRENDEOF'
-          import Foundation
-          import Speech
-          import AVFoundation
+          python3 << 'EOF'
+          import re, hashlib
 
-          enum VoicePhase { case idle, listening, thinking, speaking }
+          pbxproj_path = 'LLMFarm.xcodeproj/project.pbxproj'
+          with open(pbxproj_path, 'r') as f:
+              content = f.read()
 
-          @MainActor
-          class VoiceChatManager: NSObject, ObservableObject {
-              @Published var phase: VoicePhase = .idle
-              @Published var userText = ""
-              @Published var aiText = ""
-              var sendMessage: ((String) async -> String)?
+          def make_id(seed):
+              return hashlib.md5(seed.encode()).hexdigest()[:24].upper()
 
-              private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "ja-JP"))!
-              private var recogRequest: SFSpeechAudioBufferRecognitionRequest?
-              private var recogTask: SFSpeechRecognitionTask?
-              private let engine = AVAudioEngine()
-              private let synth = AVSpeechSynthesizer()
-              private var silenceTimer: Timer?
+          mgr_ref    = make_id('voice.mgr.ref')
+          view_ref   = make_id('voice.view.ref')
+          group_uuid = make_id('voice.group')
+          mgr_build  = make_id('voice.mgr.build')
+          view_build = make_id('voice.view.build')
 
-              override init() {
-                  super.init()
-                  synth.delegate = self
-              }
+          # 1. PBXBuildFile
+          build_entries = (
+              f'\t\t{mgr_build} /* VoiceChatManager.swift in Sources */ = {{isa = PBXBuildFile; fileRef = {mgr_ref} /* VoiceChatManager.swift */; }};\n'
+              f'\t\t{view_build} /* VoiceChatView.swift in Sources */ = {{isa = PBXBuildFile; fileRef = {view_ref} /* VoiceChatView.swift */; }};\n'
+              '\t\t/* End PBXBuildFile section */'
+          )
+          content = content.replace('/* End PBXBuildFile section */', build_entries)
 
-              func start() {
-                  SFSpeechRecognizer.requestAuthorization { _ in
-                      AVAudioSession.sharedInstance().requestRecordPermission { granted in
-                          guard granted else { return }
-                          Task { @MainActor [weak self] in self?.startListening() }
-                      }
-                  }
-              }
+          # 2. PBXFileReference
+          file_refs = (
+              f'\t\t{mgr_ref} /* VoiceChatManager.swift */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceChatManager.swift; sourceTree = "<group>"; }};\n'
+              f'\t\t{view_ref} /* VoiceChatView.swift */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceChatView.swift; sourceTree = "<group>"; }};\n'
+              '\t\t/* End PBXFileReference section */'
+          )
+          content = content.replace('/* End PBXFileReference section */', file_refs)
 
-              func startListening() {
-                  guard phase != .thinking else { return }
-                  phase = .listening
-                  userText = ""
-                  stopEngine()
-                  let session = AVAudioSession.sharedInstance()
-                  try? session.setCategory(.record, mode: .measurement, options: .duckOthers)
-                  try? session.setActive(true, options: .notifyOthersOnDeactivation)
-                  recogRequest = SFSpeechAudioBufferRecognitionRequest()
-                  recogRequest?.shouldReportPartialResults = true
-                  guard let req = recogRequest else { return }
-                  recogTask = recognizer.recognitionTask(with: req) { [weak self] result, _ in
-                      guard let result else { return }
-                      Task { @MainActor [weak self] in
-                          guard let self else { return }
-                          self.userText = result.bestTranscription.formattedString
-                          self.silenceTimer?.invalidate()
-                          self.silenceTimer = Timer.scheduledTimer(
-                              withTimeInterval: 1.5, repeats: false) { _ in
-                              Task { @MainActor [weak self] in self?.processText() }
-                          }
-                      }
-                  }
-                  let node = engine.inputNode
-                  let fmt = node.outputFormat(forBus: 0)
-                  node.installTap(onBus: 0, bufferSize: 1024, format: fmt) { [weak self] buf, _ in
-                      self?.recogRequest?.append(buf)
-                  }
-                  engine.prepare()
-                  try? engine.start()
-              }
+          # 3. PBXGroup for VoiceChat
+          group_entry = (
+              f'\t\t{group_uuid} /* VoiceChat */ = {{\n'
+              f'\t\t\tisa = PBXGroup;\n'
+              f'\t\t\tchildren = (\n'
+              f'\t\t\t\t{mgr_ref} /* VoiceChatManager.swift */,\n'
+              f'\t\t\t\t{view_ref} /* VoiceChatView.swift */,\n'
+              f'\t\t\t);\n'
+              f'\t\t\tpath = VoiceChat;\n'
+              f'\t\t\tsourceTree = "<group>";\n'
+              f'\t\t}};\n'
+              '\t\t/* End PBXGroup section */'
+          )
+          content = content.replace('/* End PBXGroup section */', group_entry)
 
-              private func processText() {
-                  let text = userText.trimmingCharacters(in: .whitespacesAndNewlines)
-                  guard !text.isEmpty else { startListening(); return }
-                  silenceTimer?.invalidate()
-                  stopEngine()
-                  phase = .thinking
-                  Task { [weak self] in
-                      guard let self else { return }
-                      let reply = await self.sendMessage?(text) ?? ""
-                      self.aiText = reply
-                      self.speak(reply)
-                  }
-              }
+          # 4. Add VoiceChat group to the parent group that contains Chats
+          chats_match = re.search(r'([0-9A-Fa-f]{24}) /\* Chats \*/ = \{', content)
+          if chats_match:
+              chats_uuid = chats_match.group(1)
+              content = content.replace(
+                  f'{chats_uuid} /* Chats */,',
+                  f'{chats_uuid} /* Chats */,\n\t\t\t\t{group_uuid} /* VoiceChat */,'
+              )
+              print(f'VoiceChat group added next to Chats ({chats_uuid})')
+          else:
+              print('WARNING: Chats group not found in pbxproj')
 
-              private func speak(_ text: String) {
-                  phase = .speaking
-                  let utt = AVSpeechUtterance(string: text)
-                  utt.voice = AVSpeechSynthesisVoice(language: "ja-JP")
-                  utt.rate = 0.5
-                  let session = AVAudioSession.sharedInstance()
-                  try? session.setCategory(.playback, mode: .default
+          # 5. Add to PBXSourcesBuildPhase
+          src_entries = (
+              f'\t\t\t\t{mgr_build} /* VoiceChatManager.swift in Sources */,\n'
+              f'\t\t\t\t{view_build} /* VoiceChatView.swift in Sources */,\n'
+          )
+          def add_src(m):
+              return m.group(1) + '\n' + src_entries
+          content = re.sub(
+              r'(isa = PBXSourcesBuildPhase;[^}]*?files = \()',
+              add_src,
+              content,
+              flags=re.DOTALL
+          )
+
+          with open(pbxproj_path, 'w') as f:
+              f.write(content)
+          print('pbxproj patched: VoiceChat files registered')
+          EOF
+
+      - name: Patch ChatView - add voice button
+        run: |
+          python3 << 'EOF'
+          with open('LLMFarm/Chats/ChatView.swift', 'r') as f:
+              content = f.read()
+
+          content = content.replace(
+              '@State private var enableRAG = false',
+              '@State private var enableRAG = false\n    @State private var showVoiceChat = false'
+          )
+
+          old_btn = '            Button {\n                Task {\n                    toggleEditChat = true\n                    editChatDialog = true\n                }\n            } label: {\n                Image(systemName: "slider.horizontal.3")\n            }\n        }'
+          new_btn = '            Button {\n                Task {\n                    toggleEditChat = true\n                    editChatDialog = true\n                }\n            } label: {\n                Image(systemName: "slider.horizontal.3")\n            }\n            Button {\n                showVoiceChat = true\n            } label: {\n                Image(systemName: "mic.fill")\n            }\n            .disabled(aiChatModel.predicting)\n        }'
+          content = content.replace(old_btn, new_btn)
+
+          content = content.replace(
+              '.sheet(isPresented: $toggleEditChat)',
+              '.fullScreenCover(isPresented: $showVoiceChat) {\n            VoiceChatView()\n                .environmentObject(aiChatModel)\n        }\n        .sheet(isPresented: $toggleEditChat)'
+          )
+
+          with open('LLMFarm/Chats/ChatView.swift', 'w') as f:
+              f.write(content)
+          print('ChatView patched')
+          EOF
+
+      - name: Build archive
+        run: |
+          xcodebuild archive \
+            -project LLMFarm.xcodeproj \
+            -scheme LLMFarm_Release \
+            -configuration Release \
+            -archivePath ./build/LLMFarm.xcarchive \
+            -destination "generic/platform=iOS" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            SKIP_INSTALL=NO
+
+      - name: Package IPA
+        run: |
+          mkdir -p ./build/Payload
+          cp -r ./build/LLMFarm.xcarchive/Products/Applications/LLMFarm.app ./build/Payload/
+          cd ./build
+          zip -r LLMFarm.ipa Payload
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LLMFarm-IPA
+          path: ./build/LLMFarm.ipa
