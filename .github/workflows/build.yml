@@ -13,6 +13,12 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Build llama.xcframework
+        run: |
+          cd llmfarm_core.swift
+          chmod +x build-xcframework_cpu.sh
+          bash build-xcframework_cpu.sh
+
       - name: Show schemes
         run: xcodebuild -list -project LLMFarm.xcodeproj
 
