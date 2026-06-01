@@ -15,7 +15,6 @@ jobs:
 
       - name: Build llama.xcframework
         run: |
-          cd llmfarm_core.swift
           chmod +x build-xcframework_cpu.sh
           bash build-xcframework_cpu.sh
 
