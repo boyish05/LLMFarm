@@ -20,6 +20,16 @@ jobs:
           chmod +x build-xcframework_cpu.sh
           bash build-xcframework_cpu.sh
 
+      - name: Fix LLMFarmShortcuts
+        run: |
+          cat > LLMFarm/Intents/LLMFarmShortcuts.swift << 'EOF'
+          import AppIntents
+
+          struct LLMFarmShortcuts: AppShortcutsProvider {
+              static var appShortcuts: [AppShortcut] { [] }
+          }
+          EOF
+
       - name: Patch - remove ExtractAppIntentsMetadata
         run: |
           python3 << 'EOF'
@@ -28,13 +38,13 @@ jobs:
           for pbxproj in glob.glob('**/*.xcodeproj/project.pbxproj', recursive=True):
               with open(pbxproj, 'r') as f:
                   content = f.read()
-              keys = re.findall(r'([A-F0-9]{24}) /\* Extract App Intents Metadata \*/', content)
+              keys = re.findall(r'([0-9A-Fa-f]{24}) /\* Extract App Intents Metadata \*/', content)
               for key in keys:
                   content = re.sub(
-                      r'\t\t' + key + r' /\* Extract App Intents Metadata \*/ = \{.*?\};\n',
+                      r'\s*' + key + r'\s*/\*\s*Extract App Intents Metadata\s*\*/\s*=\s*\{[^}]*\};',
                       '', content, flags=re.DOTALL)
                   content = re.sub(
-                      r'\t+' + key + r' /\* Extract App Intents Metadata \*/,\n',
+                      r'\s*' + key + r'\s*/\*\s*Extract App Intents Metadata\s*\*/\s*,',
                       '', content)
               with open(pbxproj, 'w') as f:
                   f.write(content)
