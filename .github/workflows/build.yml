@@ -31,12 +31,12 @@ jobs:
             -configuration Release \
             -archivePath ./build/LLMFarm.xcarchive \
             -destination "generic/platform=iOS" \
-            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_ALLOWED=YES \
             APP_INTENTS_DEPLOYMENT_POSTPROCESSING=NO \
             SKIP_INSTALL=NO
-
+            
       - name: Package IPA
         run: |
           mkdir -p ./build/Payload
