@@ -53,6 +53,86 @@ jobs:
               print(f'{pbxproj}: removed {len(keys)} phase(s)')
           EOF
 
+      - name: Patch pbxproj - register VoiceChat files
+        run: |
+          python3 << 'EOF'
+          import re, hashlib
+
+          pbxproj_path = 'LLMFarm.xcodeproj/project.pbxproj'
+          with open(pbxproj_path, 'r') as f:
+              content = f.read()
+
+          def make_id(seed):
+              return hashlib.md5(seed.encode()).hexdigest()[:24].upper()
+
+          mgr_ref    = make_id('voice.mgr.ref')
+          view_ref   = make_id('voice.view.ref')
+          group_uuid = make_id('voice.group')
+          mgr_build  = make_id('voice.mgr.build')
+          view_build = make_id('voice.view.build')
+
+          # 1. PBXBuildFile
+          build_entries = (
+              f'\t\t{mgr_build} /* VoiceChatManager.swift in Sources */ = {{isa = PBXBuildFile; fileRef = {mgr_ref} /* VoiceChatManager.swift */; }};\n'
+              f'\t\t{view_build} /* VoiceChatView.swift in Sources */ = {{isa = PBXBuildFile; fileRef = {view_ref} /* VoiceChatView.swift */; }};\n'
+              '\t\t/* End PBXBuildFile section */'
+          )
+          content = content.replace('/* End PBXBuildFile section */', build_entries)
+
+          # 2. PBXFileReference
+          file_refs = (
+              f'\t\t{mgr_ref} /* VoiceChatManager.swift */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceChatManager.swift; sourceTree = "<group>"; }};\n'
+              f'\t\t{view_ref} /* VoiceChatView.swift */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceChatView.swift; sourceTree = "<group>"; }};\n'
+              '\t\t/* End PBXFileReference section */'
+          )
+          content = content.replace('/* End PBXFileReference section */', file_refs)
+
+          # 3. PBXGroup for VoiceChat
+          group_entry = (
+              f'\t\t{group_uuid} /* VoiceChat */ = {{\n'
+              f'\t\t\tisa = PBXGroup;\n'
+              f'\t\t\tchildren = (\n'
+              f'\t\t\t\t{mgr_ref} /* VoiceChatManager.swift */,\n'
+              f'\t\t\t\t{view_ref} /* VoiceChatView.swift */,\n'
+              f'\t\t\t);\n'
+              f'\t\t\tpath = VoiceChat;\n'
+              f'\t\t\tsourceTree = "<group>";\n'
+              f'\t\t}};\n'
+              '\t\t/* End PBXGroup section */'
+          )
+          content = content.replace('/* End PBXGroup section */', group_entry)
+
+          # 4. Add VoiceChat group to the parent group that contains Chats
+          chats_match = re.search(r'([0-9A-Fa-f]{24}) /\* Chats \*/ = \{', content)
+          if chats_match:
+              chats_uuid = chats_match.group(1)
+              content = content.replace(
+                  f'{chats_uuid} /* Chats */,',
+                  f'{chats_uuid} /* Chats */,\n\t\t\t\t{group_uuid} /* VoiceChat */,'
+              )
+              print(f'VoiceChat group added next to Chats ({chats_uuid})')
+          else:
+              print('WARNING: Chats group not found in pbxproj')
+
+          # 5. Add to PBXSourcesBuildPhase
+          src_entries = (
+              f'\t\t\t\t{mgr_build} /* VoiceChatManager.swift in Sources */,\n'
+              f'\t\t\t\t{view_build} /* VoiceChatView.swift in Sources */,\n'
+          )
+          def add_src(m):
+              return m.group(1) + '\n' + src_entries
+          content = re.sub(
+              r'(isa = PBXSourcesBuildPhase;[^}]*?files = \()',
+              add_src,
+              content,
+              flags=re.DOTALL
+          )
+
+          with open(pbxproj_path, 'w') as f:
+              f.write(content)
+          print('pbxproj patched: VoiceChat files registered')
+          EOF
+
       - name: Patch ChatView - add voice button
         run: |
           python3 << 'EOF'
