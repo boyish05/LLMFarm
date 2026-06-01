@@ -53,6 +53,31 @@ jobs:
               print(f'{pbxproj}: removed {len(keys)} phase(s)')
           EOF
 
+      - name: Patch ChatView - add voice button
+        run: |
+          python3 << 'EOF'
+          with open('LLMFarm/Chats/ChatView.swift', 'r') as f:
+              content = f.read()
+
+          content = content.replace(
+              '@State private var enableRAG = false',
+              '@State private var enableRAG = false\n    @State private var showVoiceChat = false'
+          )
+
+          old_btn = '            Button {\n                Task {\n                    toggleEditChat = true\n                    editChatDialog = true\n                }\n            } label: {\n                Image(systemName: "slider.horizontal.3")\n            }\n        }'
+          new_btn = '            Button {\n                Task {\n                    toggleEditChat = true\n                    editChatDialog = true\n                }\n            } label: {\n                Image(systemName: "slider.horizontal.3")\n            }\n            Button {\n                showVoiceChat = true\n            } label: {\n                Image(systemName: "mic.fill")\n            }\n            .disabled(aiChatModel.predicting)\n        }'
+          content = content.replace(old_btn, new_btn)
+
+          content = content.replace(
+              '.sheet(isPresented: $toggleEditChat)',
+              '.fullScreenCover(isPresented: $showVoiceChat) {\n            VoiceChatView()\n                .environmentObject(aiChatModel)\n        }\n        .sheet(isPresented: $toggleEditChat)'
+          )
+
+          with open('LLMFarm/Chats/ChatView.swift', 'w') as f:
+              f.write(content)
+          print('ChatView patched')
+          EOF
+
       - name: Build archive
         run: |
           xcodebuild archive \
