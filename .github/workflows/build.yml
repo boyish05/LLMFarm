@@ -1,1 +1,42 @@
+name: Build IPA
 
+"on":
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Show schemes
+        run: xcodebuild -list -project LLMFarm.xcodeproj
+
+      - name: Build archive
+        run: |
+          xcodebuild archive \
+            -project LLMFarm.xcodeproj \
+            -scheme LLMFarm \
+            -configuration Release \
+            -archivePath ./build/LLMFarm.xcarchive \
+            -destination "generic/platform=iOS" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Package IPA
+        run: |
+          mkdir -p ./build/Payload
+          cp -r ./build/LLMFarm.xcarchive/Products/Applications/LLMFarm.app ./build/Payload/
+          cd ./build
+          zip -r LLMFarm.ipa Payload
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LLMFarm-IPA
+          path: ./build/LLMFarm.ipa
